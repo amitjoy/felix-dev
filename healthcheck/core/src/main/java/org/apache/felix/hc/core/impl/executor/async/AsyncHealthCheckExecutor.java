@@ -38,11 +38,10 @@ import org.apache.felix.hc.core.impl.executor.HealthCheckExecutorThreadPool;
 import org.apache.felix.hc.core.impl.executor.HealthCheckFuture;
 import org.apache.felix.hc.core.impl.executor.HealthCheckFuture.Callback;
 import org.apache.felix.hc.core.impl.executor.HealthCheckResultCache;
-import org.apache.felix.hc.core.impl.scheduling.AsyncQuartzCronJob;
+import org.apache.felix.hc.core.impl.executor.async.cron.HealthCheckCronScheduler;
 import org.apache.felix.hc.core.impl.scheduling.AsyncIntervalJob;
 import org.apache.felix.hc.core.impl.scheduling.AsyncJob;
-import org.apache.felix.hc.core.impl.scheduling.QuartzCronScheduler;
-import org.apache.felix.hc.core.impl.scheduling.QuartzCronSchedulerProvider;
+import org.apache.felix.hc.core.impl.scheduling.AsyncQuartzCronJob;
 import org.apache.felix.hc.core.impl.util.HealthCheckFilter;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.InvalidSyntaxException;
@@ -73,7 +72,7 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
     HealthCheckExecutorThreadPool healthCheckExecutorThreadPool;
     
     @Reference
-    QuartzCronSchedulerProvider quartzCronSchedulerProvider;
+    HealthCheckCronScheduler healthCheckCronScheduler;
 
     @Activate
     protected final void activate(final ComponentContext componentContext) throws InvalidSyntaxException {
@@ -138,9 +137,8 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
             AsyncJob healthCheckAsyncJob = null;
             
             if (isAsyncCron(descriptor)) {
-            	
                 try {
-    				healthCheckAsyncJob = new AsyncQuartzCronJob(getAsyncJob(descriptor), quartzCronSchedulerProvider, "job-hc-" + descriptor.getServiceId(), "async-healthchecks", descriptor.getAsyncCronExpression());
+    				healthCheckAsyncJob = new AsyncQuartzCronJob(getAsyncJob(descriptor), healthCheckCronScheduler, "job-hc-" + descriptor.getServiceId(), descriptor.getAsyncCronExpression());
                 } catch(ClassNotFoundException|NoClassDefFoundError e) {
                     LOG.warn("Can not schedule async health check '{}' with cron expression '{}' since quartz library is not on classpath", descriptor.getName(), descriptor.getAsyncCronExpression());
                     return false;

@@ -17,77 +17,36 @@
  */
 package org.apache.felix.hc.core.impl.scheduling;
 
-import static org.quartz.CronScheduleBuilder.cronSchedule;
-import static org.quartz.JobBuilder.newJob;
-import static org.quartz.TriggerBuilder.newTrigger;
-
-import org.quartz.CronTrigger;
-import org.quartz.Job;
-import org.quartz.JobDataMap;
-import org.quartz.JobDetail;
-import org.quartz.JobExecutionContext;
-import org.quartz.JobExecutionException;
-import org.quartz.JobKey;
-import org.quartz.Scheduler;
-import org.quartz.SchedulerException;
+import org.apache.felix.hc.core.impl.executor.async.cron.CronJob;
+import org.apache.felix.hc.core.impl.executor.async.cron.CronScheduler;
+import org.apache.felix.hc.core.impl.executor.async.cron.HealthCheckCronScheduler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Runs health checks that are configured with a cron expression for asynchronous execution. 
- * 
- * This implementation uses quartz to support the cron syntax (which is not supported by executors from standard java java.util.concurrent
- * package) */
+/**
+ *  Runs health checks that are configured with a cron expression for asynchronous execution. 
+ */
 public class AsyncQuartzCronJob extends AsyncJob {
-    private static final Logger LOG = LoggerFactory.getLogger(AsyncQuartzCronJob.class);
+	
+	private final Logger logger = LoggerFactory.getLogger(getClass());
 
-    private static final String JOB_DATA_KEY_JOB = "asyncHcJob";
+    private final CronJob cronJob;
+    protected final HealthCheckCronScheduler healtchCheckScheduler;
 
-    protected final QuartzCronScheduler quartzCronScheduler;
-    private final String id;
-    private final String group;
-    private final String cronExpression;
-
-    private JobKey jobKey = null;
-
-    public AsyncQuartzCronJob(Runnable runnable, QuartzCronSchedulerProvider quartzCronSchedulerProvider, String id, String group, String cronExpression) throws ClassNotFoundException {
+    public AsyncQuartzCronJob(Runnable runnable, HealthCheckCronScheduler healtchCheckScheduler, String id, String cronExpression) throws ClassNotFoundException {
         super(runnable);
-        this.quartzCronScheduler = quartzCronSchedulerProvider.getQuartzCronScheduler();
-        this.id = id;
-        this.group = group;
-        this.cronExpression = cronExpression;
-    }
-
-    public JobKey getJobKey() {
-        return jobKey;
-    }
-
-    private JobDetail getQuartzJobDetail() {
-        JobDataMap jobData = new JobDataMap();
-        jobData.put(JOB_DATA_KEY_JOB, runnable);
-
-        JobDetail job = newJob(AsyncQuartzCronJob.QuartzJob.class).setJobData(jobData)
-                .withIdentity(id, group)
-                .build();
-
-        jobKey = job.getKey();
-
-        return job;
+        this.healtchCheckScheduler = healtchCheckScheduler;
+        this.cronJob = new HealthCheckJob(cronExpression, id);
     }
 
     public boolean schedule() {
-
         try {
-            Scheduler scheduler = quartzCronScheduler.getScheduler();
-
-            JobDetail job = getQuartzJobDetail();
-            CronTrigger cronTrigger = newTrigger().withSchedule(cronSchedule(cronExpression)).forJob(job)
-                    .build();
-
-            scheduler.scheduleJob(job, cronTrigger);
-            LOG.info("Scheduled job {} with trigger {}", job, cronTrigger);
+            CronScheduler scheduler = healtchCheckScheduler.getScheduler();
+            scheduler.schedule(cronJob);
+            logger.info("Scheduled job {} with trigger {}", cronJob.name(), cronJob.cron());
             return true;
-        } catch (SchedulerException e) {
-            LOG.error("Could not schedule job for " + runnable + ": " + e, e);
+        } catch (Exception e) {
+            logger.error("Could not schedule job for " + runnable + ": " + e, e);
             return false;
         }
 
@@ -95,13 +54,14 @@ public class AsyncQuartzCronJob extends AsyncJob {
 
     @Override
     public boolean unschedule() {
-        Scheduler scheduler = quartzCronScheduler.getScheduler();
-        LOG.debug("Unscheduling job {}", jobKey);
+    	CronScheduler scheduler = healtchCheckScheduler.getScheduler();
+        String name = cronJob.name();
+        logger.debug("Unscheduling job {}", name);
         try {
-            scheduler.deleteJob(jobKey);
+            scheduler.remove(name);
             return true;
-        } catch (SchedulerException e) {
-            LOG.error("Could not unschedule job for " + jobKey + ": " + e, e);
+        } catch (Exception e) {
+            logger.error("Could not unschedule job for " + name + ": " + e, e);
             return false;
         }
     }
@@ -111,13 +71,27 @@ public class AsyncQuartzCronJob extends AsyncJob {
         return "[Async quartz job for " + runnable + "]";
     }
     
-    // quartz forces to pass in a class object (and not an instance), hence this helper class is needed
-    public static class QuartzJob implements Job {
-
+    private class HealthCheckJob implements CronJob {
+    	
+    	private String name;
+    	private String cronExpression;
+    	
+        public HealthCheckJob(String cronExpression, String name) {
+        	this.name = name;
+        	this.cronExpression = cronExpression;
+		}
+        
+		@Override
+        public String cron() {
+            return cronExpression;
+        }
         @Override
-        public void execute(JobExecutionContext context) throws JobExecutionException {
-        	Runnable ayncJob = (Runnable) context.getJobDetail().getJobDataMap().get(JOB_DATA_KEY_JOB);
-        	ayncJob.run();
+        public String name() {
+            return "job-hc-" + name;
+        }
+        @Override
+        public void run() throws Exception {
+        	runnable.run();
         }
     }
 
