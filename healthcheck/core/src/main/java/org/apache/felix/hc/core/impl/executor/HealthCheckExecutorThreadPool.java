@@ -71,7 +71,7 @@ public class HealthCheckExecutorThreadPool {
         return scheduleFuture;
     }
 
-    // methods below are used by AsyncHealthCheckExecutor.QuartzThreadPool
+    // methods below are used by AsyncHealthCheckExecutor.HealthCheckExecutorThreadPool
     public int getPoolSize() {
         return this.executor.getPoolSize();
     }

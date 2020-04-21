@@ -37,10 +37,10 @@ import org.apache.felix.hc.core.impl.executor.HealthCheckExecutorThreadPool;
 import org.apache.felix.hc.core.impl.executor.HealthCheckFuture;
 import org.apache.felix.hc.core.impl.executor.HealthCheckFuture.Callback;
 import org.apache.felix.hc.core.impl.executor.HealthCheckResultCache;
+import org.apache.felix.hc.core.impl.executor.async.cron.HealthCheckCronScheduler;
+import org.apache.felix.hc.core.impl.scheduling.AsyncCronJob;
 import org.apache.felix.hc.core.impl.scheduling.AsyncIntervalJob;
 import org.apache.felix.hc.core.impl.scheduling.AsyncJob;
-import org.apache.felix.hc.core.impl.scheduling.AsyncQuartzCronJob;
-import org.apache.felix.hc.core.impl.scheduling.QuartzCronSchedulerProvider;
 import org.apache.felix.hc.core.impl.util.HealthCheckFilter;
 import org.apache.felix.hc.core.impl.util.lang.StringUtils;
 import org.osgi.framework.BundleContext;
@@ -48,7 +48,6 @@ import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.framework.ServiceEvent;
 import org.osgi.framework.ServiceListener;
 import org.osgi.framework.ServiceReference;
-import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
@@ -72,17 +71,16 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
     HealthCheckExecutorThreadPool healthCheckExecutorThreadPool;
     
     @Reference
-    QuartzCronSchedulerProvider quartzCronSchedulerProvider;
+    HealthCheckCronScheduler healthCheckCronScheduler;
 
     @Activate
-    protected final void activate(final ComponentContext componentContext) throws InvalidSyntaxException {
-        this.bundleContext = componentContext.getBundleContext();
+    protected final void activate(final BundleContext bundleContext) throws InvalidSyntaxException {
         this.bundleContext.addServiceListener(this, "(objectclass=" + HealthCheck.class.getName() + ")");
 
         int count = 0;
         HealthCheckFilter healthCheckFilter = new HealthCheckFilter(bundleContext);
-        final ServiceReference[] healthCheckReferences = healthCheckFilter.getHealthCheckServiceReferences(HealthCheckSelector.empty(), false);
-        for (ServiceReference serviceReference : healthCheckReferences) {
+        final ServiceReference<?>[] healthCheckReferences = healthCheckFilter.getHealthCheckServiceReferences(HealthCheckSelector.empty(), false);
+        for (ServiceReference<?> serviceReference : healthCheckReferences) {
             HealthCheckMetadata healthCheckMetadata = new HealthCheckMetadata(serviceReference);
             if (isAsync(healthCheckMetadata)) {
                 if (scheduleHealthCheck(healthCheckMetadata)) {
@@ -94,7 +92,7 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
     }
 
     @Deactivate
-    protected final void deactivate(final ComponentContext componentContext) {
+    protected final void deactivate() {
         this.bundleContext.removeServiceListener(this);
         this.bundleContext = null;
 
@@ -110,7 +108,7 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
             // already deactivated?
             return;
         }
-        ServiceReference serviceReference = event.getServiceReference();
+        ServiceReference<?> serviceReference = event.getServiceReference();
         final boolean isHealthCheck = serviceReference.isAssignableTo(bundleContext.getBundle(), HealthCheck.class.getName());
 
         if (isHealthCheck) {
@@ -137,13 +135,7 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
             AsyncJob healthCheckAsyncJob = null;
             
             if (isAsyncCron(descriptor)) {
-            	
-                try {
-    				healthCheckAsyncJob = new AsyncQuartzCronJob(getAsyncJob(descriptor), quartzCronSchedulerProvider, "job-hc-" + descriptor.getServiceId(), "async-healthchecks", descriptor.getAsyncCronExpression());
-                } catch(ClassNotFoundException|NoClassDefFoundError e) {
-                    LOG.warn("Can not schedule async health check '{}' with cron expression '{}' since quartz library is not on classpath", descriptor.getName(), descriptor.getAsyncCronExpression());
-                    return false;
-                }
+            	healthCheckAsyncJob = new AsyncCronJob(getAsyncJob(descriptor), healthCheckCronScheduler, "job-hc-" + descriptor.getServiceId(), descriptor.getAsyncCronExpression());
             } else if (isAsyncInterval(descriptor)) {
                 healthCheckAsyncJob = new AsyncIntervalJob(getAsyncJob(descriptor), healthCheckExecutorThreadPool, descriptor.getAsyncIntervalInSec());
             }
@@ -234,17 +226,10 @@ public class AsyncHealthCheckExecutor implements ServiceListener {
 
     private ExecutionResult handleMissingResult(HealthCheckMetadata healthCheckMetadata) {
         ExecutionResult result;
-        if(isAsyncCron(healthCheckMetadata)) {
-            if(registeredJobs.containsKey(healthCheckMetadata)) {
-                result = new ExecutionResult(healthCheckMetadata,
-                        new Result(Result.Status.OK, "Async Health Check with cron expression '" + healthCheckMetadata.getAsyncCronExpression() + 
-                                "' has not yet been executed."), 0L);
-            } else {
-                result = new ExecutionResult(healthCheckMetadata,
-                        new Result(Result.Status.WARN, "Async Health Check with cron expression '" + healthCheckMetadata.getAsyncCronExpression() + 
-                                "' is never executed because quartz bundle is missing."), 0L);
-            }
-
+        if(isAsyncCron(healthCheckMetadata) && registeredJobs.containsKey(healthCheckMetadata)) {
+            result = new ExecutionResult(healthCheckMetadata,
+                    new Result(Result.Status.OK, "Async Health Check with cron expression '" + healthCheckMetadata.getAsyncCronExpression() + 
+                            "' has not yet been executed."), 0L);
         } else {
             result = new ExecutionResult(healthCheckMetadata,
                     new Result(Result.Status.OK, "Async Health Check with interval '" + healthCheckMetadata.getAsyncIntervalInSec() + 

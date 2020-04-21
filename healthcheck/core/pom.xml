@@ -165,15 +165,6 @@
             <optional>true</optional>
         </dependency>
 
-        <dependency>
-            <groupId>org.apache.servicemix.bundles</groupId>
-            <artifactId>org.apache.servicemix.bundles.quartz</artifactId>
-            <version>2.3.0_2</version>
-            <scope>provided</scope>
-            <!-- if not present in runtime, there is no support for async health checks -->
-            <optional>true</optional>
-        </dependency>
-
         <!-- used for JSONWriter, included in bundle via Conditional-Package -->
         <dependency>
             <groupId>org.apache.felix</groupId>
